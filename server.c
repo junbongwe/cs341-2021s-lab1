@@ -48,7 +48,7 @@ int main(int argc, char *argv[]) {
 }
 
 int open_listenfd(int port) {
-	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+	int optval = 1, sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	struct sockaddr_in addr = (struct sockaddr_in) {
 		.sin_family = AF_INET,
 		.sin_addr.s_addr = htonl(INADDR_ANY),
@@ -58,6 +58,7 @@ int open_listenfd(int port) {
 	if (sockfd < 0)
 		return -1;
 
+	setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
 	if (bind(sockfd, (struct sockaddr *)&addr, sizeof(addr))) {
 		close(sockfd);
 		return -1;
@@ -103,6 +104,26 @@ void *connected_thread(void *aux) {
 		int parsing_pos = 0;
 
 		sscanf(buf, "GET %s", &pathname[2]);
+		while (1) {
+			while (strncmp(&buf[parsing_pos++], "\r\n", 2) != 0) {
+				if (parsing_pos > read_byte - 4) {
+					eno = 400;
+					goto err;
+				}
+			}
+			parsing_pos++;
+			if (strncmp(&buf[parsing_pos], "\r\n", 2) == 0) {
+				parsing_pos += 2;
+				break;
+			}
+			while (buf[parsing_pos] != ':') {
+				if ((parsing_pos >= read_byte - 5) || (strncmp(&buf[parsing_pos], "\r\n", 2) == 0)) {
+					eno = 404;
+					goto err;
+				}
+				parsing_pos++;
+			}
+		}
 
 		if (((fd = open(pathname, O_RDONLY)) < 0) || fstat(fd, &statbuf)) {
 			eno = 404;

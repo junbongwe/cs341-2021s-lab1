@@ -76,6 +76,7 @@ void do_get_method(int clientfd, char *hostname, char *port, char *pathname) {
 
 	write(clientfd, buf, strlen(buf));
 	read_byte = read(clientfd, buf, DBUF_SIZE);
+
 	while (1) {
 		while (strncmp(&buf[parsing_pos++], "\r\n", 2) != 0) {
 			if (parsing_pos > read_byte - 4)
@@ -104,22 +105,31 @@ void do_get_method(int clientfd, char *hostname, char *port, char *pathname) {
 }
 
 void do_post_method(int clientfd, char *hostname, char *port, char *pathname) {	
-	struct stat statbuf;
 	char buf[DBUF_SIZE];
 	int read_byte;
+	size_t file_size = 0, content_buf_size = (1UL << 12);
+	char *content_buf = (char *)malloc(content_buf_size);
 
-	if (fstat(STDIN_FILENO, &statbuf))
+stdin_read:
+	if (content_buf == NULL)
 		return;
+	read_byte = read(STDIN_FILENO, &content_buf[file_size], content_buf_size - file_size);
+	file_size += read_byte;
+	if (file_size == content_buf_size) {
+		content_buf_size <<= 1;
+		content_buf = realloc(content_buf, content_buf_size);
+		goto stdin_read;
+	}
 
 	sprintf(buf, "POST %s HTTP/1.0\r\n", pathname);
 	sprintf(buf, "%sHost: %s:%s\r\n", buf, hostname, port);
 	sprintf(buf, "%sUser-Agent: Firefox/3.6\r\n", buf);
-	sprintf(buf, "%sContent-Length: %ld\r\n", buf, statbuf.st_size);
+	sprintf(buf, "%sContent-Length: %ld\r\n", buf, file_size);
 	sprintf(buf, "%sConnection: Keep-Alive\r\n\r\n", buf);
 
 	write(clientfd, buf, strlen(buf));
-	do {
-		read_byte = read(STDIN_FILENO, buf, DBUF_SIZE);
-		write(clientfd, buf, read_byte);
-	} while (read_byte == DBUF_SIZE);
+	write(clientfd, content_buf, file_size);
+	free(content_buf);
+
+	read_byte = read(clientfd, buf, DBUF_SIZE);
 }
