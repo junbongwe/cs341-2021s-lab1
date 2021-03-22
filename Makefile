@@ -3,10 +3,10 @@
 all: client server
 
 client: client.c
-	cc -o client client.c -g
+	cc -o client client.c
 
 server: server.c
-	cc -o server server.c -lpthread -g
+	cc -o server server.c -lpthread
 
 
 SERVER_PORT := 8080
