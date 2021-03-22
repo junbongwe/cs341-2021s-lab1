@@ -8,6 +8,7 @@
 #include <sys/socket.h>
 #include <netdb.h>
 
+#define DBUF_SIZE (1 << 16) // 64KB
 #define BUF_SIZE (1 << 12) // 4KB
 
 int open_clientfd(char *hostname, char *port);
@@ -64,22 +65,47 @@ int open_clientfd(char *hostname, char *port) {
 }
 
 void do_get_method(int clientfd, char *hostname, char *port, char *pathname) {
-	char buf[BUF_SIZE];
-	int read_byte;
+	char buf[DBUF_SIZE];
+	int read_byte, write_byte, parsing_pos = 0;
+	size_t content_length = 0;
 
 	sprintf(buf, "GET %s HTTP/1.0\r\n", pathname);
 	sprintf(buf, "%sHost: %s:%s\r\n", buf, hostname, port);
 	sprintf(buf, "%sUser-Agent: Firefox/3.6\r\n", buf);
 	sprintf(buf, "%sConnection: Keep-Alive\r\n\r\n", buf);
 
-	write(clientfd, buf, strlen(buf) + 1);
-	while ((read_byte = read(clientfd, buf, BUF_SIZE)) != 0)
-		write(STDOUT_FILENO, buf, read_byte);
+	write(clientfd, buf, strlen(buf));
+	read_byte = read(clientfd, buf, DBUF_SIZE);
+	while (1) {
+		while (strncmp(&buf[parsing_pos++], "\r\n", 2) != 0) {
+			if (parsing_pos > read_byte - 4)
+				return;
+		}
+		parsing_pos++;
+		if (strncmp(&buf[parsing_pos], "\r\n", 2) == 0) {
+			parsing_pos += 2;
+			break;
+		}
+		if (strncmp(&buf[parsing_pos], "Content-Length", 14) == 0)
+			sscanf(&buf[parsing_pos], "Content-Length: %ld", &content_length);
+	}
+
+	if (read_byte > parsing_pos) {
+		write_byte = (read_byte - parsing_pos < content_length) ? read_byte - parsing_pos : content_length;
+		write(STDOUT_FILENO, &buf[parsing_pos], write_byte);
+		content_length -= write_byte;
+	}
+	while (content_length) {
+		read_byte = read(clientfd, buf, DBUF_SIZE);
+		write_byte = (read_byte < content_length) ? read_byte : content_length;
+		write(STDOUT_FILENO, buf, write_byte);
+		content_length -= write_byte;
+	}
 }
 
 void do_post_method(int clientfd, char *hostname, char *port, char *pathname) {	
 	struct stat statbuf;
-	char buf[BUF_SIZE];
+	char buf[DBUF_SIZE];
 	int read_byte;
 
 	if (fstat(STDIN_FILENO, &statbuf))
@@ -91,7 +117,9 @@ void do_post_method(int clientfd, char *hostname, char *port, char *pathname) {
 	sprintf(buf, "%sContent-Length: %ld\r\n", buf, statbuf.st_size);
 	sprintf(buf, "%sConnection: Keep-Alive\r\n\r\n", buf);
 
-	write(clientfd, buf, strlen(buf) + 1);
-	while((read_byte = read(STDIN_FILENO, buf, BUF_SIZE)) != 0)
+	write(clientfd, buf, strlen(buf));
+	do {
+		read_byte = read(STDIN_FILENO, buf, DBUF_SIZE);
 		write(clientfd, buf, read_byte);
+	} while (read_byte == DBUF_SIZE);
 }
